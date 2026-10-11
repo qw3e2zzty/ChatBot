@@ -1,5 +1,7 @@
 import asyncio
+import csv
 import html
+import io
 import logging
 import os
 import sqlite3
@@ -13,7 +15,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
@@ -176,6 +178,30 @@ async def show_leads(message: Message, state: FSMContext):
             f"{html.escape(program)} — {html.escape(name)}, {html.escape(contact)}\n"
         )
     await message.answer("\n".join(lines))
+
+
+@router.message(Command("export"))
+async def export_leads(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    await state.clear()
+    with closing(sqlite3.connect(DB_PATH)) as db:
+        rows = db.execute(
+            "SELECT id, created_at, program, name, contact, tg_username, tg_id "
+            "FROM leads ORDER BY id"
+        ).fetchall()
+    if not rows:
+        await message.answer("Заявок пока нет.")
+        return
+    buf = io.StringIO()
+    writer = csv.writer(buf, delimiter=";")  # ; и utf-8-sig, чтобы Excel открыл без кракозябр
+    writer.writerow(["№", "Дата", "Программа", "Имя", "Контакт", "Username", "Telegram ID"])
+    writer.writerows(rows)
+    data = buf.getvalue().encode("utf-8-sig")
+    await message.answer_document(
+        BufferedInputFile(data, filename="leads.csv"),
+        caption=f"Всего заявок: {len(rows)}",
+    )
 
 
 @router.callback_query(F.data == "menu")
